@@ -1,0 +1,33 @@
+# Git
+.git
+.gitignore
+
+# Ambiente e segredos (NUNCA incluir na imagem Docker)
+.env
+.env.*
+!.env.example
+
+# Logs e diagnósticos
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Dependências locais e cache
+node_modules
+.npm
+dist
+coverage
+
+# IDEs e ferramentas
+.vscode
+.idea
+.agents
+.gemini
+*.swp
+*.swo
+
+# Testes e relatórios
+tests/
+vitest.config.ts
+README.md
