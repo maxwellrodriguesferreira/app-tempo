@@ -8,6 +8,7 @@ interface HeaderProps {
   onSelectTab: (tab: string) => void;
   redisLatencyMs?: number;
   onSearchCity?: (city: string | CitySearchResult) => void;
+  onOpenAbout?: () => void;
 }
 
 export interface AppNotification {
@@ -26,6 +27,7 @@ export const Header: React.FC<HeaderProps> = ({
   onSelectTab,
   redisLatencyMs = 1.4,
   onSearchCity,
+  onOpenAbout,
 }) => {
   const { user, logout } = useAuth();
   const [searchInput, setSearchInput] = useState('');
@@ -282,6 +284,18 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               );
             })}
+
+            {onOpenAbout && (
+              <button
+                type="button"
+                onClick={onOpenAbout}
+                className="ml-1 px-3 py-1.5 text-xs font-semibold rounded-lg text-primary hover:text-primary-container hover:bg-primary-fixed/40 transition-all flex items-center gap-1.5 border border-primary/20 bg-primary-fixed/20 shadow-2xs"
+                title="Conheça o resumo das funcionalidades da aplicação"
+              >
+                <span className="material-symbols-outlined text-[15px]">info</span>
+                <span>Sobre</span>
+              </button>
+            )}
           </nav>
         </div>
 
@@ -652,6 +666,18 @@ export const Header: React.FC<HeaderProps> = ({
                     <span className="material-symbols-outlined text-sm text-primary">developer_board</span>
                     Infraestrutura & Logs
                   </button>
+                  {onOpenAbout && (
+                    <button
+                      onClick={() => {
+                        setUserMenuOpen(false);
+                        onOpenAbout();
+                      }}
+                      className="w-full text-left px-3 py-2 text-xs text-on-surface hover:bg-surface-container flex items-center gap-2"
+                    >
+                      <span className="material-symbols-outlined text-sm text-primary">info</span>
+                      Sobre a Aplicação
+                    </button>
+                  )}
                   <button
                     onClick={async () => {
                       setUserMenuOpen(false);
@@ -695,6 +721,16 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           );
         })}
+        {onOpenAbout && (
+          <button
+            type="button"
+            onClick={onOpenAbout}
+            className="px-2.5 py-1 text-[11px] font-semibold rounded-md text-primary bg-primary-fixed/30 border border-primary/20 flex items-center gap-1"
+          >
+            <span className="material-symbols-outlined text-[13px]">info</span>
+            <span>Sobre</span>
+          </button>
+        )}
       </div>
     </header>
   );

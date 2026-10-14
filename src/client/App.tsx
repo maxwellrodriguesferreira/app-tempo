@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext.js';
 import { Header } from './components/Header.js';
 import { Footer } from './components/Footer.js';
+import { AboutModal } from './components/AboutModal.js';
 import { WeatherPage } from './pages/WeatherPage.js';
 import { AuthPage } from './pages/AuthPage.js';
 import { AdminPage } from './pages/AdminPage.js';
@@ -12,6 +13,7 @@ import { CitySearchResult } from '../shared/types.js';
 const AppContent: React.FC = () => {
   const { user } = useAuth();
   const [currentTab, setCurrentTab] = useState<string>('weather');
+  const [isAboutOpen, setIsAboutOpen] = useState<boolean>(false);
   const [searchedCity, setSearchedCity] = useState<string | CitySearchResult | undefined>(undefined);
 
   const handleSearchCity = (city: string | CitySearchResult) => {
@@ -19,12 +21,21 @@ const AppContent: React.FC = () => {
     setCurrentTab('weather');
   };
 
+  const handleSelectTab = (tab: string) => {
+    if (tab === 'about') {
+      setIsAboutOpen(true);
+      return;
+    }
+    setCurrentTab(tab);
+  };
+
   return (
     <div className="min-h-screen flex flex-col justify-between bg-surface">
       <Header
         currentTab={currentTab}
-        onSelectTab={(tab) => setCurrentTab(tab)}
+        onSelectTab={handleSelectTab}
         onSearchCity={handleSearchCity}
+        onOpenAbout={() => setIsAboutOpen(true)}
       />
 
       <main className="w-full pt-16 flex-1">
@@ -59,7 +70,16 @@ const AppContent: React.FC = () => {
         {currentTab === 'infra' && <InfrastructurePage />}
       </main>
 
-      <Footer />
+      <Footer onOpenAbout={() => setIsAboutOpen(true)} />
+
+      <AboutModal
+        isOpen={isAboutOpen}
+        onClose={() => setIsAboutOpen(false)}
+        onNavigate={(tab) => {
+          setIsAboutOpen(false);
+          setCurrentTab(tab);
+        }}
+      />
     </div>
   );
 };

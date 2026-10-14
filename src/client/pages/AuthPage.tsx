@@ -72,14 +72,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onSuccessLogin }) => {
     }
   };
 
-  const fillAdminCredentials = () => {
-    setEmail('admin@climastack.io');
-    setPassword('AdminSecure2026!');
-    setTab('login');
-    setErrorMessage(null);
-    setInfoMessage(null);
-  };
-
   return (
     <div className="w-full max-w-7xl mx-auto px-4 lg:px-6 py-6 flex flex-col items-center justify-center">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch w-full">
@@ -380,33 +372,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onSuccessLogin }) => {
                     </span>
                   </button>
                 </form>
-
-                {/* Atalho de Credenciais de Demonstração */}
-                <div className="mt-6 pt-4 border-t border-surface-container-highest flex flex-col gap-2">
-                  <span className="font-mono text-[10px] text-outline uppercase font-semibold">
-                    Acesso Rápido para Avaliação:
-                  </span>
-                  <button
-                    type="button"
-                    onClick={fillAdminCredentials}
-                    className="text-left p-2.5 bg-surface-container-low hover:bg-surface-container rounded-lg border border-surface-container-highest transition-colors flex items-center justify-between"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="material-symbols-outlined text-tertiary text-base">
-                        admin_panel_settings
-                      </span>
-                      <div className="text-[11px]">
-                        <span className="font-semibold text-on-surface block">
-                          Preencher Conta Administrador (Root IAM)
-                        </span>
-                        <span className="font-mono text-outline">
-                          admin@climastack.io / AdminSecure2026!
-                        </span>
-                      </div>
-                    </div>
-                    <span className="text-[10px] font-bold text-primary font-mono">Usar</span>
-                  </button>
-                </div>
               </>
             )}
           </div>
