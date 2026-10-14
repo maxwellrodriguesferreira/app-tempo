@@ -4,6 +4,7 @@ import {
   FavoriteLocation,
   AuditLog,
   TelemetryStatus,
+  CitySearchResult,
 } from '../../shared/types.js';
 
 export class ApiError extends Error {
@@ -54,7 +55,13 @@ export const api = {
     }),
 
   register: (payload: { name: string; email: string; password: string }) =>
-    request<{ user: UserSanitized; token: string; expires_at: string }>('/api/v1/auth/register', {
+    request<{
+      user: UserSanitized;
+      token?: string;
+      expires_at?: string;
+      message?: string;
+      requires_approval?: boolean;
+    }>('/api/v1/auth/register', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
@@ -67,17 +74,19 @@ export const api = {
   getMe: () => request<{ user: UserSanitized }>('/api/v1/auth/me'),
 
   // Previsão do tempo
-  getWeather: (params?: { city?: string; lat?: number; lon?: number }) => {
+  getWeather: (params?: { city?: string; lat?: number; lon?: number; state?: string; country?: string }) => {
     const searchParams = new URLSearchParams();
     if (params?.city) searchParams.set('city', params.city);
     if (params?.lat !== undefined) searchParams.set('lat', String(params.lat));
     if (params?.lon !== undefined) searchParams.set('lon', String(params.lon));
+    if (params?.state) searchParams.set('state', params.state);
+    if (params?.country) searchParams.set('country', params.country);
     const qs = searchParams.toString();
     return request<{ data: WeatherData; source: string }>(`/api/v1/weather/current${qs ? '?' + qs : ''}`);
   },
 
   searchCities: (query: string) =>
-    request<{ results: Array<{ id: number; name: string; state: string; country: string; latitude: number; longitude: number }> }>(
+    request<{ results: CitySearchResult[] }>(
       `/api/v1/weather/search?q=${encodeURIComponent(query)}`
     ),
 
@@ -95,18 +104,62 @@ export const api = {
     }),
 
   // Usuários & IAM
-  getUsers: (filters?: { search?: string; role?: string }) => {
+  getUsers: (filters?: { search?: string; role?: string; status?: string }) => {
     const sp = new URLSearchParams();
     if (filters?.search) sp.set('search', filters.search);
     if (filters?.role) sp.set('role', filters.role);
+    if (filters?.status) sp.set('status', filters.status);
     const qs = sp.toString();
     return request<{ users: UserSanitized[]; total: number }>(`/api/v1/users${qs ? '?' + qs : ''}`);
   },
 
   getUserStats: () =>
-    request<{ totalUsers: number; adminUsers: number; blockedUsers: number; activeToday: number }>(
-      '/api/v1/users/stats'
-    ),
+    request<{
+      totalUsers: number;
+      adminUsers: number;
+      blockedUsers: number;
+      pendingApproval: number;
+      activeToday: number;
+    }>('/api/v1/users/stats'),
+
+  createUser: (payload: {
+    name: string;
+    email: string;
+    password: string;
+    role?: 'admin' | 'user';
+    is_approved?: boolean;
+  }) =>
+    request<{ message: string; user: UserSanitized }>('/api/v1/users', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateUser: (
+    id: string,
+    payload: {
+      name?: string;
+      email?: string;
+      role?: 'admin' | 'user';
+      is_blocked?: boolean;
+      is_approved?: boolean;
+      password?: string;
+    }
+  ) =>
+    request<{ message: string; user: UserSanitized }>(`/api/v1/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+
+  approveUser: (id: string, is_approved: boolean, reason?: string) =>
+    request<{ message: string; user_id: string; is_approved: boolean }>(`/api/v1/users/${id}/approve`, {
+      method: 'PATCH',
+      body: JSON.stringify({ is_approved, reason }),
+    }),
+
+  deleteUser: (id: string) =>
+    request<{ message: string; user_id: string }>(`/api/v1/users/${id}`, {
+      method: 'DELETE',
+    }),
 
   updateUserRole: (id: string, role: 'admin' | 'user') =>
     request<{ message: string; user_id: string; new_role: string }>(`/api/v1/users/${id}/role`, {

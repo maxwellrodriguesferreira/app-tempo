@@ -144,6 +144,7 @@ export class SessionService {
       email: u.email,
       role: u.role,
       is_blocked: Boolean(u.is_blocked),
+      is_approved: u.role === 'admin' ? true : Boolean(u.is_approved),
       created_at: u.created_at,
       last_login_at: u.last_login_at,
     };

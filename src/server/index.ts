@@ -146,10 +146,15 @@ app.get('*', async (c) => {
   `);
 });
 
+import { ensureAdminUser } from './auth/admin-init.js';
+
 // Inicialização do servidor Node HTTP (apenas fora do ambiente de testes unitários)
 let server: ReturnType<typeof serve> | null = null;
 
 if (process.env.NODE_ENV !== 'test') {
+  // Sincroniza o admin configurado via ADMIN_EMAIL e ADMIN_PASS se fornecidos
+  ensureAdminUser().catch((e) => console.warn('[IAM] Erro ao provisionar admin:', e));
+
   server = serve(
     {
       fetch: app.fetch,
@@ -169,6 +174,7 @@ if (process.env.NODE_ENV !== 'test') {
 🛡️ Proteção Brute-Force:    Ativa (Sliding window & Lockout)
 📊 Cloudflare D1:           Configurado (${config.D1_API_URL ? 'Worker Proxy' : config.CLOUDFLARE_D1_DATABASE_ID ? 'REST API' : 'Fallback Local'})
 ⚡ Redis Remoto:            ${sanitizeForLogs(config.REDIS_URL)}
+👑 Admin Inicial:           ${config.ADMIN_EMAIL ? config.ADMIN_EMAIL : '(padrão: carlos.mendes@climastack.io)'}
       `);
     }
   );

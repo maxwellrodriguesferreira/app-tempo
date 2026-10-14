@@ -1,20 +1,27 @@
 import { z } from 'zod';
 
+const emptyToUndefined = (val: unknown) =>
+  typeof val === 'string' && val.trim() === '' ? undefined : val;
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().default(8080),
   HOST: z.string().default('0.0.0.0'),
-  APP_BASE_URL: z.string().url().default('http://localhost:8080'),
+  APP_BASE_URL: z.preprocess(emptyToUndefined, z.string().url().default('http://localhost:8080')),
+
+  // Credenciais de Inicialização do Administrador (IAM Root)
+  ADMIN_EMAIL: z.preprocess(emptyToUndefined, z.string().email().optional()),
+  ADMIN_PASS: z.preprocess(emptyToUndefined, z.string().min(6).optional()),
 
   // Cloudflare D1 integration
-  D1_API_URL: z.string().url().optional(),
-  D1_API_TOKEN: z.string().min(1).optional(),
-  CLOUDFLARE_ACCOUNT_ID: z.string().optional(),
-  CLOUDFLARE_D1_DATABASE_ID: z.string().optional(),
-  CLOUDFLARE_API_TOKEN: z.string().optional(),
+  D1_API_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
+  D1_API_TOKEN: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
+  CLOUDFLARE_ACCOUNT_ID: z.preprocess(emptyToUndefined, z.string().optional()),
+  CLOUDFLARE_D1_DATABASE_ID: z.preprocess(emptyToUndefined, z.string().optional()),
+  CLOUDFLARE_API_TOKEN: z.preprocess(emptyToUndefined, z.string().optional()),
 
   // Redis remote
-  REDIS_URL: z.string().optional(),
+  REDIS_URL: z.preprocess(emptyToUndefined, z.string().optional()),
   REDIS_TLS_ENABLED: z.coerce.boolean().default(false),
   REDIS_MAX_RETRIES_PER_REQUEST: z.coerce.number().default(2),
   REDIS_CONNECT_TIMEOUT_MS: z.coerce.number().default(4000),
@@ -30,7 +37,7 @@ const envSchema = z.object({
 
   // Weather API
   WEATHER_PROVIDER: z.enum(['open-meteo', 'openweathermap']).default('open-meteo'),
-  WEATHER_API_KEY: z.string().optional(),
+  WEATHER_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;

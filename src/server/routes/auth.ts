@@ -9,6 +9,7 @@ import { requireAuth } from '../auth/middleware.js';
 import { loginSchema, registerSchema } from '../../shared/schema.js';
 import { User, UserSanitized, AppEnv } from '../../shared/types.js';
 import { config } from '../config.js';
+import { ensureAdminUser } from '../auth/admin-init.js';
 
 const authRoutes = new Hono<AppEnv>();
 
@@ -42,7 +43,20 @@ authRoutes.post('/login', async (c) => {
   }
 
   // 2. Busca o usuário no Cloudflare D1
-  const user = await db.queryFirst<User>(`SELECT * FROM users WHERE email = ? LIMIT 1`, [email.toLowerCase()]);
+  let user = await db.queryFirst<User>(`SELECT * FROM users WHERE email = ? LIMIT 1`, [email.toLowerCase()]);
+
+  // Se o email coincidir com ADMIN_EMAIL e ADMIN_PASS configurados no ambiente
+  if (
+    config.ADMIN_EMAIL &&
+    config.ADMIN_PASS &&
+    email.toLowerCase() === config.ADMIN_EMAIL.toLowerCase()
+  ) {
+    const isPasswordValid = user ? await verifyPassword(password, user.password_hash) : false;
+    if (!isPasswordValid && password === config.ADMIN_PASS) {
+      await ensureAdminUser();
+      user = await db.queryFirst<User>(`SELECT * FROM users WHERE email = ? LIMIT 1`, [email.toLowerCase()]);
+    }
+  }
 
   // Se o usuário não existir ou a senha for inválida
   if (!user || !(await verifyPassword(password, user.password_hash))) {
@@ -85,7 +99,18 @@ authRoutes.post('/login', async (c) => {
     );
   }
 
-  // 3. Verifica se a conta está bloqueada administrativamente
+  // 3. Verifica se a conta está aprovada pelo administrador (se não for admin)
+  if (user.role !== 'admin' && !Boolean(user.is_approved)) {
+    return c.json(
+      {
+        error: 'Sua conta está aguardando a aprovação do administrador para ter acesso à plataforma.',
+        pending_approval: true,
+      },
+      403
+    );
+  }
+
+  // 4. Verifica se a conta está bloqueada administrativamente
   if (user.is_blocked) {
     return c.json(
       {
@@ -96,17 +121,17 @@ authRoutes.post('/login', async (c) => {
     );
   }
 
-  // 4. Sucesso: reseta os contadores do rate limiter
+  // 5. Sucesso: reseta os contadores do rate limiter
   await rateLimiter.reset(email, ip);
 
-  // 5. Atualiza last_login_at
+  // 6. Atualiza last_login_at
   const now = new Date().toISOString();
   await db.execute(`UPDATE users SET last_login_at = ? WHERE id = ?`, [now, user.id]);
 
-  // 6. Cria sessão segura (D1 + Redis)
+  // 7. Cria sessão segura (D1 + Redis)
   const { token, session } = await sessionService.createSession(user, { userAgent, ipAddress: ip });
 
-  // 7. Define cookie seguro
+  // 8. Define cookie seguro
   const isSecure = config.NODE_ENV === 'production';
   setCookie(c, 'session_token', token, {
     httpOnly: true,
@@ -116,7 +141,7 @@ authRoutes.post('/login', async (c) => {
     maxAge: config.SESSION_TTL_SECONDS,
   });
 
-  // 8. Registra sucesso na auditoria
+  // 9. Registra sucesso na auditoria
   await db.execute(
     `INSERT INTO audit_logs (id, actor_id, actor_name, action, target_id, target_type, details, ip_address, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -143,7 +168,7 @@ authRoutes.post('/login', async (c) => {
 
 /**
  * POST /api/v1/auth/register
- * Cadastro de novo usuário
+ * Cadastro de novo usuário (usuários comuns ficam pendentes de aceite do admin)
  */
 authRoutes.post('/register', async (c) => {
   const ip = c.req.header('x-forwarded-for')?.split(',')[0].trim() || '127.0.0.1';
@@ -168,9 +193,11 @@ authRoutes.post('/register', async (c) => {
   const userId = `usr_${crypto.randomUUID()}`;
   const now = new Date().toISOString();
 
-  // Se for o primeiro usuário do sistema, atribui admin
+  // Se for o primeiro usuário do sistema, atribui admin e aprovação automática
   const allUsersCount = (await db.query<User>(`SELECT id FROM users LIMIT 2`)).length;
-  const initialRole = allUsersCount === 0 ? 'admin' : 'user';
+  const isInitialAdmin = allUsersCount === 0;
+  const initialRole = isInitialAdmin ? 'admin' : 'user';
+  const initialApproved = isInitialAdmin ? 1 : 0;
 
   const newUser: User = {
     id: userId,
@@ -179,14 +206,15 @@ authRoutes.post('/register', async (c) => {
     password_hash: passwordHash,
     role: initialRole,
     is_blocked: 0,
+    is_approved: initialApproved,
     created_at: now,
     updated_at: now,
-    last_login_at: now,
+    last_login_at: isInitialAdmin ? now : null,
   };
 
   await db.execute(
-    `INSERT INTO users (id, name, email, password_hash, role, is_blocked, created_at, updated_at, last_login_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO users (id, name, email, password_hash, role, is_blocked, is_approved, created_at, updated_at, last_login_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       newUser.id,
       newUser.name,
@@ -194,23 +222,12 @@ authRoutes.post('/register', async (c) => {
       newUser.password_hash,
       newUser.role,
       newUser.is_blocked,
+      newUser.is_approved,
       newUser.created_at,
       newUser.updated_at,
       newUser.last_login_at,
     ]
   );
-
-  // Cria sessão imediata
-  const { token, session } = await sessionService.createSession(newUser, { userAgent, ipAddress: ip });
-
-  const isSecure = config.NODE_ENV === 'production';
-  setCookie(c, 'session_token', token, {
-    httpOnly: true,
-    secure: isSecure,
-    sameSite: 'Lax',
-    path: '/',
-    maxAge: config.SESSION_TTL_SECONDS,
-  });
 
   // Registra auditoria
   await db.execute(
@@ -223,15 +240,39 @@ authRoutes.post('/register', async (c) => {
       'USER_REGISTERED',
       newUser.id,
       'USER',
-      JSON.stringify({ role: newUser.role }),
+      JSON.stringify({ role: newUser.role, pending_approval: !isInitialAdmin }),
       ip,
       now,
     ]
   );
 
+  // Se não for admin, não cria sessão: fica pendente de aceite do admin
+  if (!isInitialAdmin) {
+    return c.json(
+      {
+        message: 'Cadastro realizado com sucesso! Sua conta está aguardando a aprovação do administrador para ter acesso à plataforma.',
+        requires_approval: true,
+        user: sessionService.sanitizeUser(newUser),
+      },
+      201
+    );
+  }
+
+  // Se for o admin inicial, cria sessão imediata
+  const { token, session } = await sessionService.createSession(newUser, { userAgent, ipAddress: ip });
+
+  const isSecure = config.NODE_ENV === 'production';
+  setCookie(c, 'session_token', token, {
+    httpOnly: true,
+    secure: isSecure,
+    sameSite: 'Lax',
+    path: '/',
+    maxAge: config.SESSION_TTL_SECONDS,
+  });
+
   return c.json(
     {
-      message: 'Usuário cadastrado com sucesso.',
+      message: 'Usuário administrador registrado com sucesso.',
       user: sessionService.sanitizeUser(newUser),
       token,
       expires_at: session.expires_at,

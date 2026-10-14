@@ -1,28 +1,56 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../services/api.js';
-import { WeatherData, FavoriteLocation } from '../../shared/types.js';
+import { useAuth } from '../context/AuthContext.js';
+import { WeatherData, FavoriteLocation, CitySearchResult } from '../../shared/types.js';
 
 interface WeatherPageProps {
-  searchedCity?: string;
+  searchedCity?: string | CitySearchResult;
   onClearSearch?: () => void;
 }
 
 export const WeatherPage: React.FC<WeatherPageProps> = ({ searchedCity, onClearSearch }) => {
+  const { user } = useAuth();
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [unit, setUnit] = useState<'C' | 'F'>('C');
   const [showAlert, setShowAlert] = useState(true);
-  const [currentCity, setCurrentCity] = useState(searchedCity || 'São Paulo');
+  const [currentCity, setCurrentCity] = useState('São Paulo');
   const [favorites, setFavorites] = useState<FavoriteLocation[]>([]);
-  const [showAddFavModal, setShowAddFavModal] = useState(false);
-  const [newFavName, setNewFavName] = useState('');
+  const [favActionLoading, setFavActionLoading] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [cityTab, setCityTab] = useState<'brasil' | 'mundo' | 'favoritos'>('brasil');
 
-  const loadWeather = async (city: string) => {
+  // Remove toast após 3.5 segundos
+  useEffect(() => {
+    if (!toastMessage) return;
+    const timer = setTimeout(() => setToastMessage(null), 3500);
+    return () => clearTimeout(timer);
+  }, [toastMessage]);
+
+  const loadWeather = async (
+    target: string | CitySearchResult | { city?: string; lat?: number; lon?: number; state?: string; country?: string }
+  ) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.getWeather({ city });
+      let params: { city?: string; lat?: number; lon?: number; state?: string; country?: string } = {};
+
+      if (typeof target === 'string') {
+        params = { city: target };
+      } else if ('latitude' in target && 'longitude' in target) {
+        params = {
+          city: target.name,
+          lat: target.latitude,
+          lon: target.longitude,
+          state: target.state,
+          country: target.country,
+        };
+      } else {
+        params = target;
+      }
+
+      const res = await api.getWeather(params);
       setWeather(res.data);
       setCurrentCity(res.data.location.name);
     } catch (err: unknown) {
@@ -35,16 +63,75 @@ export const WeatherPage: React.FC<WeatherPageProps> = ({ searchedCity, onClearS
   const loadFavorites = async () => {
     try {
       const res = await api.getFavorites();
-      setFavorites(res.favorites);
+      setFavorites(res.favorites || []);
     } catch {
-      // Ignora erro se não autenticado
+      // Ignora erro caso não autenticado
     }
   };
 
   useEffect(() => {
-    loadWeather(searchedCity || currentCity);
+    if (searchedCity) {
+      loadWeather(searchedCity);
+    } else {
+      loadWeather(currentCity);
+    }
     loadFavorites();
   }, [searchedCity]);
+
+  // Verifica se a cidade atual exibida está favoritada pelo usuário
+  const currentFavoriteItem = weather
+    ? favorites.find(
+        (f) =>
+          f.city_name.toLowerCase() === weather.location.name.toLowerCase() ||
+          (Math.abs(f.latitude - weather.location.latitude) < 0.1 &&
+            Math.abs(f.longitude - weather.location.longitude) < 0.1)
+      )
+    : undefined;
+
+  const isCurrentFavorite = Boolean(currentFavoriteItem);
+
+  const handleToggleFavorite = async () => {
+    if (!weather) return;
+
+    if (!user) {
+      setToastMessage('⚠️ Faça login na sua conta para salvar cidades favoritas.');
+      return;
+    }
+
+    setFavActionLoading(true);
+    try {
+      if (isCurrentFavorite && currentFavoriteItem) {
+        await api.removeFavorite(currentFavoriteItem.id);
+        setFavorites((prev) => prev.filter((f) => f.id !== currentFavoriteItem.id));
+        setToastMessage(`Cidade ${weather.location.name} removida dos favoritos.`);
+      } else {
+        const res = await api.addFavorite({
+          city_name: weather.location.name,
+          state: weather.location.state,
+          country: weather.location.country,
+          latitude: weather.location.latitude,
+          longitude: weather.location.longitude,
+        });
+        setFavorites((prev) => [res.favorite, ...prev]);
+        setToastMessage(`⭐ ${weather.location.name} adicionada aos favoritos com sucesso!`);
+      }
+    } catch (err: unknown) {
+      setToastMessage(err instanceof Error ? err.message : 'Falha ao atualizar favoritos.');
+    } finally {
+      setFavActionLoading(false);
+    }
+  };
+
+  const handleRemoveFavoriteDirect = async (favId: string, cityName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await api.removeFavorite(favId);
+      setFavorites((prev) => prev.filter((f) => f.id !== favId));
+      setToastMessage(`Favorito ${cityName} removido.`);
+    } catch {
+      setToastMessage('Erro ao remover favorito.');
+    }
+  };
 
   const toDisplayTemp = (celsius: number) => {
     if (unit === 'F') {
@@ -53,15 +140,52 @@ export const WeatherPage: React.FC<WeatherPageProps> = ({ searchedCity, onClearS
     return Math.round(celsius);
   };
 
-  const popularCities = [
-    { name: 'São Paulo', state: 'SP', temp: 24, icon: 'partly_cloudy_day' },
-    { name: 'Rio de Janeiro', state: 'RJ', temp: 29, icon: 'wb_sunny' },
-    { name: 'Belo Horizonte', state: 'MG', temp: 22, icon: 'rainy' },
-    { name: 'Curitiba', state: 'PR', temp: 18, icon: 'cloud' },
+  // Cidades do Brasil (Capitais e grandes centros)
+  const brazilianCities = [
+    { name: 'São Paulo', state: 'SP', country: 'Brasil', lat: -23.5505, lon: -46.6333, temp: 24, icon: 'partly_cloudy_day' },
+    { name: 'Rio de Janeiro', state: 'RJ', country: 'Brasil', lat: -22.9068, lon: -43.1729, temp: 29, icon: 'wb_sunny' },
+    { name: 'Brasília', state: 'DF', country: 'Brasil', lat: -15.7975, lon: -47.8919, temp: 26, icon: 'wb_sunny' },
+    { name: 'Salvador', state: 'BA', country: 'Brasil', lat: -12.9777, lon: -38.5016, temp: 28, icon: 'wb_sunny' },
+    { name: 'Curitiba', state: 'PR', country: 'Brasil', lat: -25.4284, lon: -49.2733, temp: 18, icon: 'cloud' },
+    { name: 'Belo Horizonte', state: 'MG', country: 'Brasil', lat: -19.9167, lon: -43.9345, temp: 22, icon: 'rainy' },
+    { name: 'Manaus', state: 'AM', country: 'Brasil', lat: -3.1190, lon: -60.0217, temp: 31, icon: 'thunderstorm' },
+    { name: 'Porto Alegre', state: 'RS', country: 'Brasil', lat: -30.0346, lon: -51.2177, temp: 20, icon: 'partly_cloudy_day' },
+    { name: 'Fortaleza', state: 'CE', country: 'Brasil', lat: -3.7319, lon: -38.5267, temp: 30, icon: 'wb_sunny' },
+    { name: 'Recife', state: 'PE', country: 'Brasil', lat: -8.0476, lon: -34.8770, temp: 28, icon: 'wb_sunny' },
+    { name: 'Florianópolis', state: 'SC', country: 'Brasil', lat: -27.5954, lon: -48.5480, temp: 21, icon: 'partly_cloudy_day' },
+    { name: 'Belém', state: 'PA', country: 'Brasil', lat: -1.4558, lon: -48.4902, temp: 30, icon: 'thunderstorm' },
+    { name: 'Goiânia', state: 'GO', country: 'Brasil', lat: -16.6869, lon: -49.2648, temp: 27, icon: 'wb_sunny' },
+  ];
+
+  // Cidades Internacionais (América, Europa, Ásia, Oceania)
+  const worldCities = [
+    { name: 'Nova York', state: 'NY', country: 'Estados Unidos', lat: 40.7128, lon: -74.0060, temp: 19, icon: 'cloud' },
+    { name: 'Paris', state: 'Île-de-France', country: 'França', lat: 48.8566, lon: 2.3522, temp: 16, icon: 'partly_cloudy_day' },
+    { name: 'Londres', state: 'Inglaterra', country: 'Reino Unido', lat: 51.5074, lon: -0.1278, temp: 14, icon: 'foggy' },
+    { name: 'Tóquio', state: 'Kanto', country: 'Japão', lat: 35.6762, lon: 139.6503, temp: 21, icon: 'wb_sunny' },
+    { name: 'Lisboa', state: 'Lisboa', country: 'Portugal', lat: 38.7223, lon: -9.1393, temp: 22, icon: 'wb_sunny' },
+    { name: 'Buenos Aires', state: 'CABA', country: 'Argentina', lat: -34.6037, lon: -58.3816, temp: 18, icon: 'partly_cloudy_day' },
+    { name: 'Miami', state: 'FL', country: 'Estados Unidos', lat: 25.7617, lon: -80.1918, temp: 29, icon: 'wb_sunny' },
+    { name: 'Roma', state: 'Lazio', country: 'Itália', lat: 41.9028, lon: 12.4964, temp: 23, icon: 'wb_sunny' },
+    { name: 'Berlim', state: 'Berlin', country: 'Alemanha', lat: 52.5200, lon: 13.4050, temp: 15, icon: 'cloud' },
+    { name: 'Sydney', state: 'NSW', country: 'Austrália', lat: -33.8688, lon: 151.2093, temp: 22, icon: 'wb_sunny' },
   ];
 
   return (
-    <div className="w-full max-w-7xl mx-auto px-4 lg:px-6 py-6 flex flex-col gap-6">
+    <div className="w-full max-w-7xl mx-auto px-4 lg:px-6 py-6 flex flex-col gap-6 relative">
+      {/* Toast Notification Flutuante */}
+      {toastMessage && (
+        <div className="fixed top-20 right-6 z-50 bg-on-surface text-white text-xs font-semibold px-4 py-2.5 rounded-xl shadow-2xl border border-white/10 flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
+          <span>{toastMessage}</span>
+          <button
+            onClick={() => setToastMessage(null)}
+            className="text-white/60 hover:text-white ml-2"
+          >
+            <span className="material-symbols-outlined text-[16px]">close</span>
+          </button>
+        </div>
+      )}
+
       {/* 1. Alerta Meteorológico INMET Oficial */}
       {showAlert && (
         <div className="w-full bg-amber-500/10 border border-amber-500/20 text-on-surface rounded-2xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-sm relative overflow-hidden animate-in fade-in">
@@ -94,15 +218,15 @@ export const WeatherPage: React.FC<WeatherPageProps> = ({ searchedCity, onClearS
         </div>
       )}
 
-      {/* 2. Barra de Localização & Cidades Favoritas */}
-      <section className="flex flex-col gap-4">
-        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
+      {/* 2. Barra de Localização & Cidades (Favoritas, Brasil e Mundo) */}
+      <section className="flex flex-col gap-3">
+        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-2 px-3.5 py-2 bg-white rounded-xl shadow-sm border border-surface-container-highest">
               <span className="material-symbols-outlined text-primary text-[20px]">my_location</span>
               <div className="flex flex-col">
                 <span className="text-xs font-bold text-on-surface leading-tight">
-                  GPS: {weather?.location.name || currentCity}, {weather?.location.state || 'Brasil'}
+                  GPS: {weather?.location.name || currentCity}, {weather?.location.state ? `${weather.location.state}, ` : ''}{weather?.location.country || 'Brasil'}
                 </span>
                 <span className="font-mono text-[10px] text-on-surface-variant leading-none">
                   Lat: {weather?.location.latitude.toFixed(2)}° • Lon: {weather?.location.longitude.toFixed(2)}°
@@ -114,23 +238,115 @@ export const WeatherPage: React.FC<WeatherPageProps> = ({ searchedCity, onClearS
             <button
               onClick={() => loadWeather(currentCity)}
               className="flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-surface-container text-on-surface text-xs font-semibold rounded-xl border border-surface-container-highest transition-all shadow-sm"
+              title="Recarregar dados meteorológicos"
             >
               <span className="material-symbols-outlined text-[16px] text-primary">sync</span>
-              <span className="hidden sm:inline">Sincronizar Radar</span>
+              <span className="hidden sm:inline">Sincronizar</span>
             </button>
           </div>
 
-          {/* Alternador de Cidades Favoritas */}
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-            <span className="font-mono text-[11px] text-outline uppercase font-semibold shrink-0">
-              Cidades:
-            </span>
-            {popularCities.map((c) => {
+          {/* Alternador de Categorias de Cidades */}
+          <div className="flex items-center gap-1.5 bg-surface-container-low p-1 rounded-xl border border-surface-container-highest self-start lg:self-auto">
+            <button
+              onClick={() => setCityTab('brasil')}
+              className={`flex items-center gap-1 px-3 py-1 text-xs font-bold rounded-lg transition-all ${
+                cityTab === 'brasil' ? 'bg-white text-primary shadow-xs' : 'text-on-surface-variant hover:text-on-surface'
+              }`}
+            >
+              <span>🇧🇷</span>
+              <span>Brasil</span>
+            </button>
+
+            <button
+              onClick={() => setCityTab('mundo')}
+              className={`flex items-center gap-1 px-3 py-1 text-xs font-bold rounded-lg transition-all ${
+                cityTab === 'mundo' ? 'bg-white text-primary shadow-xs' : 'text-on-surface-variant hover:text-on-surface'
+              }`}
+            >
+              <span>🌐</span>
+              <span>Mundo</span>
+            </button>
+
+            <button
+              onClick={() => setCityTab('favoritos')}
+              className={`flex items-center gap-1 px-3 py-1 text-xs font-bold rounded-lg transition-all ${
+                cityTab === 'favoritos'
+                  ? 'bg-amber-50 text-amber-800 border border-amber-300 shadow-xs'
+                  : 'text-on-surface-variant hover:text-on-surface'
+              }`}
+            >
+              <span className="text-amber-500">⭐</span>
+              <span>Favoritos ({favorites.length})</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Lista Horizontal de Cidades Conforme a Categoria Selecionada */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+          {cityTab === 'favoritos' ? (
+            favorites.length === 0 ? (
+              <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-on-surface-variant bg-surface-container-low rounded-xl border border-dashed border-surface-container-highest">
+                <span className="material-symbols-outlined text-[16px] text-amber-500">star_outline</span>
+                <span>Nenhuma cidade favoritada ainda. Clique em &ldquo;Favoritar&rdquo; no card abaixo para salvar suas cidades!</span>
+              </div>
+            ) : (
+              favorites.map((fav) => {
+                const isSelected = currentCity.toLowerCase() === fav.city_name.toLowerCase();
+                return (
+                  <div
+                    key={fav.id}
+                    className={`flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-full text-xs font-semibold shrink-0 transition-all border ${
+                      isSelected
+                        ? 'bg-amber-50 border-amber-400 text-amber-900 shadow-sm'
+                        : 'bg-white hover:bg-surface-container text-on-surface border-surface-container-highest'
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() =>
+                        loadWeather({
+                          city: fav.city_name,
+                          lat: fav.latitude,
+                          lon: fav.longitude,
+                          state: fav.state || undefined,
+                          country: fav.country,
+                        })
+                      }
+                      className="flex items-center gap-1.5"
+                    >
+                      <span className="material-symbols-outlined text-[15px] text-amber-500">star</span>
+                      <span>{fav.city_name}</span>
+                      <span className="font-mono text-[10px] text-on-surface-variant">
+                        {fav.state || fav.country}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => handleRemoveFavoriteDirect(fav.id, fav.city_name, e)}
+                      className="w-4 h-4 rounded-full hover:bg-black/10 flex items-center justify-center text-outline hover:text-error ml-1"
+                      title="Remover dos favoritos"
+                    >
+                      <span className="material-symbols-outlined text-[12px]">close</span>
+                    </button>
+                  </div>
+                );
+              })
+            )
+          ) : (
+            (cityTab === 'brasil' ? brazilianCities : worldCities).map((c) => {
               const isSelected = currentCity.toLowerCase() === c.name.toLowerCase();
               return (
                 <button
-                  key={c.name}
-                  onClick={() => loadWeather(c.name)}
+                  key={`${c.name}_${c.lat}`}
+                  onClick={() =>
+                    loadWeather({
+                      city: c.name,
+                      lat: c.lat,
+                      lon: c.lon,
+                      state: c.state,
+                      country: c.country,
+                    })
+                  }
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold shrink-0 transition-all ${
                     isSelected
                       ? 'bg-primary text-white shadow-sm'
@@ -138,20 +354,22 @@ export const WeatherPage: React.FC<WeatherPageProps> = ({ searchedCity, onClearS
                   }`}
                 >
                   <span className="material-symbols-outlined text-[15px]">
-                    {isSelected ? 'star' : c.icon}
+                    {isSelected ? 'location_on' : c.icon}
                   </span>
                   <span>{c.name}</span>
                   <span
                     className={`font-mono text-[10px] px-1 py-0.2 rounded ${
-                      isSelected ? 'bg-primary-container text-white' : 'bg-surface-container-low text-on-surface-variant'
+                      isSelected
+                        ? 'bg-primary-container text-white'
+                        : 'bg-surface-container-low text-on-surface-variant'
                     }`}
                   >
                     {c.temp}°C
                   </span>
                 </button>
               );
-            })}
-          </div>
+            })
+          )}
         </div>
       </section>
 
@@ -210,24 +428,55 @@ export const WeatherPage: React.FC<WeatherPageProps> = ({ searchedCity, onClearS
                     </p>
                   </div>
 
-                  {/* Alternador °C / °F */}
-                  <div className="flex items-center gap-1 bg-surface-container-low p-1 rounded-xl self-start sm:self-auto border border-surface-container-highest">
+                  {/* Ações: Favoritar & Alternador °C / °F */}
+                  <div className="flex items-center gap-2 self-start sm:self-auto">
+                    {/* Botão de Favoritar no Cloudflare D1 */}
                     <button
-                      onClick={() => setUnit('C')}
-                      className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${
-                        unit === 'C' ? 'bg-white text-primary shadow-xs' : 'text-on-surface-variant'
+                      type="button"
+                      onClick={handleToggleFavorite}
+                      disabled={favActionLoading}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+                        isCurrentFavorite
+                          ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100 shadow-xs'
+                          : 'bg-white hover:bg-surface-container text-on-surface border-surface-container-highest shadow-xs'
                       }`}
+                      title={
+                        isCurrentFavorite
+                          ? 'Clique para remover dos seus favoritos'
+                          : user
+                          ? 'Salvar esta cidade nos favoritos'
+                          : 'Faça login para salvar favoritos'
+                      }
                     >
-                      °C Métrico
+                      <span
+                        className={`material-symbols-outlined text-[18px] transition-transform ${
+                          isCurrentFavorite ? 'text-amber-500 font-bold' : 'text-outline'
+                        }`}
+                      >
+                        {isCurrentFavorite ? 'star' : 'star_border'}
+                      </span>
+                      <span>{isCurrentFavorite ? 'Favorita' : 'Favoritar'}</span>
                     </button>
-                    <button
-                      onClick={() => setUnit('F')}
-                      className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${
-                        unit === 'F' ? 'bg-white text-primary shadow-xs' : 'text-on-surface-variant'
-                      }`}
-                    >
-                      °F Imperial
-                    </button>
+
+                    {/* Alternador °C / °F */}
+                    <div className="flex items-center gap-1 bg-surface-container-low p-1 rounded-xl border border-surface-container-highest">
+                      <button
+                        onClick={() => setUnit('C')}
+                        className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${
+                          unit === 'C' ? 'bg-white text-primary shadow-xs' : 'text-on-surface-variant'
+                        }`}
+                      >
+                        °C Métrico
+                      </button>
+                      <button
+                        onClick={() => setUnit('F')}
+                        className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${
+                          unit === 'F' ? 'bg-white text-primary shadow-xs' : 'text-on-surface-variant'
+                        }`}
+                      >
+                        °F Imperial
+                      </button>
+                    </div>
                   </div>
                 </div>
 

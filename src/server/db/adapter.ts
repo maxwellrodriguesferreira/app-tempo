@@ -252,9 +252,11 @@ export class InMemoryDatabaseAdapter implements DatabaseAdapter {
       id: 'usr_admin_carlos',
       name: 'Carlos Mendes',
       email: 'carlos.mendes@climastack.io',
-      password_hash: '1df0dda7cde6d00a6ff09952a6f967ab:f528b1db25d94c5375d0af330d3a6960f73186f703d8771b1893e50f71168b81325dac380f579dbbc41f5be774a070db9fd21ee29697ae21a34c74e54054f866',
+      password_hash:
+        '1df0dda7cde6d00a6ff09952a6f967ab:f528b1db25d94c5375d0af330d3a6960f73186f703d8771b1893e50f71168b81325dac380f579dbbc41f5be774a070db9fd21ee29697ae21a34c74e54054f866',
       role: 'admin',
       is_blocked: 0,
+      is_approved: 1,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       last_login_at: new Date().toISOString(),
@@ -320,17 +322,19 @@ export class InMemoryDatabaseAdapter implements DatabaseAdapter {
   async execute(sql: string, params: unknown[] = []): Promise<{ changes: number; lastInsertRowid?: number | string }> {
     const normalized = sql.trim().toLowerCase();
 
-    if (normalized.startsWith('insert into users')) {
-      const [id, name, email, passwordHash, role, isBlocked, createdAt, updatedAt] = params as [
-        string,
-        string,
-        string,
-        string,
-        string,
-        number,
-        string,
-        string
-      ];
+    if (normalized.startsWith('insert into users') || normalized.startsWith('insert or replace into users')) {
+      const id = params[0] as string;
+      const name = params[1] as string;
+      const email = params[2] as string;
+      const passwordHash = params[3] as string;
+      const role = params[4] as string;
+      const isBlocked = params[5] as number;
+      // Se tiver 10 parâmetros: id, name, email, password_hash, role, is_blocked, is_approved, created_at, updated_at, last_login_at
+      const isApproved = params.length >= 7 && typeof params[6] === 'number' ? params[6] : 1;
+      const createdAt = (params.length >= 8 ? params[7] : params[6]) as string;
+      const updatedAt = (params.length >= 9 ? params[8] : params[7]) as string;
+      const lastLoginAt = (params.length >= 10 ? params[9] : null) as string | null;
+
       this.users.set(id, {
         id,
         name,
@@ -338,40 +342,38 @@ export class InMemoryDatabaseAdapter implements DatabaseAdapter {
         password_hash: passwordHash,
         role: role || 'user',
         is_blocked: isBlocked ?? 0,
+        is_approved: isApproved ?? 1,
         created_at: createdAt || new Date().toISOString(),
         updated_at: updatedAt || new Date().toISOString(),
-        last_login_at: null,
+        last_login_at: lastLoginAt || null,
       });
       return { changes: 1, lastInsertRowid: id };
     }
 
-    if (normalized.startsWith('update users set role = ?')) {
-      const [role, id] = params as [string, string];
-      const user = this.users.get(id);
-      if (user) {
-        user.role = role;
-        user.updated_at = new Date().toISOString();
-        return { changes: 1 };
-      }
-      return { changes: 0 };
+    if (normalized.startsWith('delete from users where id = ?')) {
+      const id = params[0] as string;
+      const existed = this.users.delete(id);
+      return { changes: existed ? 1 : 0 };
     }
 
-    if (normalized.startsWith('update users set is_blocked = ?')) {
-      const [isBlocked, id] = params as [number, string];
+    if (normalized.startsWith('update users set') && normalized.includes('where id = ?')) {
+      const id = params[params.length - 1] as string;
       const user = this.users.get(id);
       if (user) {
-        user.is_blocked = isBlocked;
-        user.updated_at = new Date().toISOString();
-        return { changes: 1 };
-      }
-      return { changes: 0 };
-    }
-
-    if (normalized.startsWith('update users set last_login_at = ?')) {
-      const [lastLoginAt, id] = params as [string, string];
-      const user = this.users.get(id);
-      if (user) {
-        user.last_login_at = lastLoginAt;
+        const setClause = sql.substring(sql.toLowerCase().indexOf('set') + 3, sql.toLowerCase().lastIndexOf('where id = ?')).trim();
+        const assignments = setClause.split(',').map((s) => s.trim().toLowerCase());
+        assignments.forEach((assign, index) => {
+          const col = assign.split('=')[0].trim();
+          const val = params[index];
+          if (col === 'name') user.name = val;
+          if (col === 'email') user.email = val;
+          if (col === 'role') user.role = val;
+          if (col === 'is_blocked') user.is_blocked = val;
+          if (col === 'is_approved') user.is_approved = val;
+          if (col === 'password_hash') user.password_hash = val;
+          if (col === 'updated_at') user.updated_at = val;
+          if (col === 'last_login_at') user.last_login_at = val;
+        });
         return { changes: 1 };
       }
       return { changes: 0 };
@@ -404,6 +406,18 @@ export class InMemoryDatabaseAdapter implements DatabaseAdapter {
       let removed = 0;
       for (const [id, s] of this.sessions.entries()) {
         if (s.token_hash === tokenHash) {
+          this.sessions.delete(id);
+          removed++;
+        }
+      }
+      return { changes: removed };
+    }
+
+    if (normalized.startsWith('delete from sessions where user_id = ?')) {
+      const userId = params[0] as string;
+      let removed = 0;
+      for (const [id, s] of this.sessions.entries()) {
+        if (s.user_id === userId) {
           this.sessions.delete(id);
           removed++;
         }
@@ -469,6 +483,18 @@ export class InMemoryDatabaseAdapter implements DatabaseAdapter {
         return { changes: 1 };
       }
       return { changes: 0 };
+    }
+
+    if (normalized.startsWith('delete from favorite_locations where user_id = ?')) {
+      const userId = params[0] as string;
+      let removed = 0;
+      for (const [id, f] of this.favorites.entries()) {
+        if (f.user_id === userId) {
+          this.favorites.delete(id);
+          removed++;
+        }
+      }
+      return { changes: removed };
     }
 
     return { changes: 1 };

@@ -26,10 +26,15 @@ class RedisManager {
     }
 
     try {
-      const isTls = config.REDIS_URL.startsWith('rediss://') || config.REDIS_TLS_ENABLED;
-      console.info(`[Redis] Conectando ao Redis remoto: ${sanitizeForLogs(config.REDIS_URL)} (TLS: ${isTls})`);
+      const isUpstash = config.REDIS_URL.includes('.upstash.io');
+      const isTls = config.REDIS_URL.startsWith('rediss://') || config.REDIS_TLS_ENABLED || isUpstash;
+      const normalizedUrl = isTls && config.REDIS_URL.startsWith('redis://')
+        ? config.REDIS_URL.replace(/^redis:\/\//, 'rediss://')
+        : config.REDIS_URL;
 
-      this.client = new Redis(config.REDIS_URL, {
+      console.info(`[Redis] Conectando ao Redis remoto: ${sanitizeForLogs(normalizedUrl)} (TLS: ${isTls})`);
+
+      this.client = new Redis(normalizedUrl, {
         tls: isTls ? { rejectUnauthorized: false } : undefined,
         connectTimeout: config.REDIS_CONNECT_TIMEOUT_MS,
         maxRetriesPerRequest: config.REDIS_MAX_RETRIES_PER_REQUEST,

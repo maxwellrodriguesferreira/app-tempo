@@ -7,12 +7,14 @@ import { AuthPage } from './pages/AuthPage.js';
 import { AdminPage } from './pages/AdminPage.js';
 import { InfrastructurePage } from './pages/InfrastructurePage.js';
 
+import { CitySearchResult } from '../shared/types.js';
+
 const AppContent: React.FC = () => {
   const { user } = useAuth();
   const [currentTab, setCurrentTab] = useState<string>('weather');
-  const [searchedCity, setSearchedCity] = useState<string | undefined>(undefined);
+  const [searchedCity, setSearchedCity] = useState<string | CitySearchResult | undefined>(undefined);
 
-  const handleSearchCity = (city: string) => {
+  const handleSearchCity = (city: string | CitySearchResult) => {
     setSearchedCity(city);
     setCurrentTab('weather');
   };

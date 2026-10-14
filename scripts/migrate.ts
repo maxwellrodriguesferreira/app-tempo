@@ -16,11 +16,17 @@ async function runMigrations() {
     const filePath = path.join(migrationsDir, file);
     const sqlContent = fs.readFileSync(filePath, 'utf-8');
 
+    // Remove comentários linha a linha antes de dividir por ponto e vírgula
+    const cleanedSql = sqlContent
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('--'))
+      .join('\n');
+
     // Divide em comandos individuais
-    const statements = sqlContent
+    const statements = cleanedSql
       .split(';')
       .map((s) => s.trim())
-      .filter((s) => s.length > 0 && !s.startsWith('--'));
+      .filter((s) => s.length > 0);
 
     for (const sql of statements) {
       try {

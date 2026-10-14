@@ -7,6 +7,7 @@ export interface User {
   password_hash: string;
   role: UserRole;
   is_blocked: number | boolean;
+  is_approved?: number | boolean;
   created_at: string;
   updated_at: string;
   last_login_at?: string | null;
@@ -26,6 +27,7 @@ export interface UserSanitized {
   email: string;
   role: UserRole;
   is_blocked: boolean;
+  is_approved: boolean;
   created_at: string;
   last_login_at?: string | null;
 }
@@ -144,4 +146,15 @@ export interface TelemetryStatus {
     provider: string;
     rate_limiter_active: boolean;
   };
+}
+
+export interface CitySearchResult {
+  id: string | number;
+  name: string;
+  state?: string;
+  country: string;
+  country_code?: string;
+  latitude: number;
+  longitude: number;
+  timezone?: string;
 }

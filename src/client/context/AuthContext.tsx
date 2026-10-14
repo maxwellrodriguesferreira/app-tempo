@@ -6,7 +6,13 @@ interface AuthContextType {
   user: UserSanitized | null;
   loading: boolean;
   login: (credentials: { email: string; password: string }) => Promise<void>;
-  register: (payload: { name: string; email: string; password: string }) => Promise<void>;
+  register: (payload: { name: string; email: string; password: string }) => Promise<{
+    user: UserSanitized;
+    token?: string;
+    expires_at?: string;
+    message?: string;
+    requires_approval?: boolean;
+  }>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -41,8 +47,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const register = async (payload: { name: string; email: string; password: string }) => {
     const res = await api.register(payload);
-    localStorage.setItem('climastack_token', res.token);
-    setUser(res.user);
+    if (res.token) {
+      localStorage.setItem('climastack_token', res.token);
+      setUser(res.user);
+    }
+    return res;
   };
 
   const logout = async () => {

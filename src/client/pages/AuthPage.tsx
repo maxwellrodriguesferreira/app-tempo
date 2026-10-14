@@ -17,6 +17,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onSuccessLogin }) => {
 
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [lockoutRemaining, setLockoutRemaining] = useState<number | null>(null);
 
   // Contador regressivo para o bloqueio de brute-force
@@ -31,18 +32,35 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onSuccessLogin }) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
+    setInfoMessage(null);
     setLoading(true);
 
     try {
       if (tab === 'login') {
         await login({ email, password });
+        if (onSuccessLogin) onSuccessLogin();
       } else {
-        await register({ name, email, password });
+        const res = await register({ name, email, password });
+        if (res.requires_approval) {
+          setInfoMessage(
+            'Sua conta foi cadastrada com sucesso! Como medida de segurança, o acesso à plataforma está aguardando o aceite/aprovação do administrador.'
+          );
+          setTab('login');
+          setName('');
+          setPassword('');
+          return;
+        }
+        if (onSuccessLogin) onSuccessLogin();
       }
-      if (onSuccessLogin) onSuccessLogin();
     } catch (err: unknown) {
       if (err instanceof ApiError) {
-        setErrorMessage(err.message);
+        if (err.data?.pending_approval) {
+          setErrorMessage(
+            'Sua conta ainda não foi aprovada pelo administrador. Por favor, aguarde a liberação do seu acesso antes de fazer login.'
+          );
+        } else {
+          setErrorMessage(err.message);
+        }
         if (err.status === 429 && err.data?.seconds_remaining) {
           setLockoutRemaining(Number(err.data.seconds_remaining));
         }
@@ -55,10 +73,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onSuccessLogin }) => {
   };
 
   const fillAdminCredentials = () => {
-    setEmail('carlos.mendes@climastack.io');
-    setPassword('Admin123!');
+    setEmail('admin@climastack.io');
+    setPassword('AdminSecure2026!');
     setTab('login');
     setErrorMessage(null);
+    setInfoMessage(null);
   };
 
   return (
@@ -258,6 +277,19 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onSuccessLogin }) => {
                   </div>
                 )}
 
+                {/* Banner Informativo (Aprovação / Aceite) */}
+                {infoMessage && (
+                  <div className="mb-4 p-3.5 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl text-xs flex items-start gap-2.5 animate-in fade-in">
+                    <span className="material-symbols-outlined text-lg text-amber-600 shrink-0 mt-0.5">
+                      info
+                    </span>
+                    <div className="flex-1 leading-relaxed">
+                      <strong className="block font-semibold mb-0.5">Aprovação Necessária</strong>
+                      <span>{infoMessage}</span>
+                    </div>
+                  </div>
+                )}
+
                 {errorMessage && (
                   <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs flex items-center gap-2">
                     <span className="material-symbols-outlined text-lg">error</span>
@@ -365,10 +397,10 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onSuccessLogin }) => {
                       </span>
                       <div className="text-[11px]">
                         <span className="font-semibold text-on-surface block">
-                          Preencher Conta Administrador (Carlos Mendes)
+                          Preencher Conta Administrador (Root IAM)
                         </span>
                         <span className="font-mono text-outline">
-                          carlos.mendes@climastack.io / Admin123!
+                          admin@climastack.io / AdminSecure2026!
                         </span>
                       </div>
                     </div>

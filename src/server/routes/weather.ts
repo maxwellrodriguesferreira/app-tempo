@@ -5,20 +5,14 @@ import { db } from '../db/adapter.js';
 import { requireAuth } from '../auth/middleware.js';
 import { weatherQuerySchema, addFavoriteSchema } from '../../shared/schema.js';
 import { WeatherData, FavoriteLocation, UserSanitized, AppEnv } from '../../shared/types.js';
+import {
+  findCityInCatalog,
+  searchCitiesUnified,
+  CATALOG_CITIES,
+  normalizeText,
+} from '../weather/cities-catalog.js';
 
 const weatherRoutes = new Hono<AppEnv>();
-
-// Coordenadas padrão de cidades brasileiras para resposta rápida e fallback
-const DEFAULT_CITIES: Record<string, { lat: number; lon: number; name: string; state: string; country: string }> = {
-  'sao paulo': { lat: -23.5505, lon: -46.6333, name: 'São Paulo', state: 'SP', country: 'Brasil' },
-  'rio de janeiro': { lat: -22.9068, lon: -43.1729, name: 'Rio de Janeiro', state: 'RJ', country: 'Brasil' },
-  'belo horizonte': { lat: -19.9167, lon: -43.9345, name: 'Belo Horizonte', state: 'MG', country: 'Brasil' },
-  'curitiba': { lat: -25.4284, lon: -49.2733, name: 'Curitiba', state: 'PR', country: 'Brasil' },
-  'brasilia': { lat: -15.7975, lon: -47.8919, name: 'Brasília', state: 'DF', country: 'Brasil' },
-  'salvador': { lat: -12.9777, lon: -38.5016, name: 'Salvador', state: 'BA', country: 'Brasil' },
-  'manaus': { lat: -3.1190, lon: -60.0217, name: 'Manaus', state: 'AM', country: 'Brasil' },
-  'porto alegre': { lat: -30.0346, lon: -51.2177, name: 'Porto Alegre', state: 'RS', country: 'Brasil' },
-};
 
 function getWindDirection(deg: number): string {
   const directions = ['Norte (N)', 'Nordeste (NE)', 'Leste (E)', 'Sudeste (SE)', 'Sul (S)', 'Sudoeste (SO)', 'Oeste (O)', 'Noroeste (NO)'];
@@ -79,37 +73,41 @@ weatherRoutes.get('/current', async (c) => {
   let lat = parsed.data.lat;
   let lon = parsed.data.lon;
   let cityName = parsed.data.city || 'São Paulo';
-  let state = 'SP';
-  let country = 'Brasil';
+  let state = parsed.data.state || '';
+  let country = parsed.data.country || '';
 
-  // Se passou nome da cidade mas não coordenadas, procura no dicionário ou geocoder
+  // Se passou coordenadas mas não passou nome/país, tenta inferir do catálogo
+  if (lat !== undefined && lon !== undefined && (!country || !state)) {
+    const nearby = CATALOG_CITIES.find(
+      (c) => Math.abs(c.latitude - lat!) < 0.15 && Math.abs(c.longitude - lon!) < 0.15
+    );
+    if (nearby) {
+      if (!state) state = nearby.state || '';
+      if (!country) country = nearby.country;
+      if (!parsed.data.city) cityName = nearby.name;
+    }
+  }
+
+  // Se não passou coordenadas, procura no catálogo abrangente ou nos geocoders
   if ((lat === undefined || lon === undefined) && cityName) {
-    const key = cityName.toLowerCase().trim();
-    if (DEFAULT_CITIES[key]) {
-      const city = DEFAULT_CITIES[key];
-      lat = city.lat;
-      lon = city.lon;
-      cityName = city.name;
-      state = city.state;
-      country = city.country;
+    const matched = findCityInCatalog(cityName);
+    if (matched) {
+      lat = matched.latitude;
+      lon = matched.longitude;
+      cityName = matched.name;
+      if (!state) state = matched.state || '';
+      if (!country) country = matched.country;
     } else {
-      // Tenta Open-Meteo Geocoding API
+      // Tenta busca geocodificada externa unificada
       try {
-        const geoRes = await fetch(
-          `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityName)}&count=1&language=pt&format=json`
-        );
-        if (geoRes.ok) {
-          const geoData = (await geoRes.json()) as {
-            results?: Array<{ name: string; admin1?: string; country?: string; latitude: number; longitude: number }>;
-          };
-          if (geoData.results && geoData.results.length > 0) {
-            const first = geoData.results[0];
-            lat = first.latitude;
-            lon = first.longitude;
-            cityName = first.name;
-            state = first.admin1 || '';
-            country = first.country || 'Brasil';
-          }
+        const results = await searchCitiesUnified(cityName, 1);
+        if (results.length > 0) {
+          const first = results[0];
+          lat = first.latitude;
+          lon = first.longitude;
+          cityName = first.name;
+          if (!state) state = first.state || '';
+          if (!country) country = first.country;
         }
       } catch (err) {
         console.warn('[Geocoding Error]:', err instanceof Error ? err.message : err);
@@ -117,12 +115,14 @@ weatherRoutes.get('/current', async (c) => {
     }
   }
 
-  // Fallback para São Paulo se ainda indefinido
+  // Fallback seguro se ainda indefinido
   if (lat === undefined || lon === undefined) {
     lat = -23.5505;
     lon = -46.6333;
     cityName = 'São Paulo';
     state = 'SP';
+    country = 'Brasil';
+  } else if (!country) {
     country = 'Brasil';
   }
 
@@ -310,7 +310,7 @@ weatherRoutes.get('/current', async (c) => {
 
 /**
  * GET /api/v1/weather/search
- * Busca de cidades por geocodificação
+ * Busca de cidades do Brasil e do mundo com catálogo amplo, suporte a OpenWeatherMap e Open-Meteo
  */
 weatherRoutes.get('/search', async (c) => {
   const q = c.req.query('q')?.trim() || '';
@@ -319,39 +319,22 @@ weatherRoutes.get('/search', async (c) => {
   }
 
   try {
-    const res = await fetch(
-      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=5&language=pt&format=json`
-    );
-    if (!res.ok) {
-      return c.json({ results: [] });
-    }
-    const data = (await res.json()) as {
-      results?: Array<{ id: number; name: string; latitude: number; longitude: number; admin1?: string; country?: string }>;
-    };
-
-    const results = (data.results || []).map((r) => ({
-      id: r.id,
-      name: r.name,
-      state: r.admin1 || '',
-      country: r.country || 'Brasil',
-      latitude: r.latitude,
-      longitude: r.longitude,
-    }));
-
+    const results = await searchCitiesUnified(q, 10);
     return c.json({ results });
-  } catch {
+  } catch (err) {
+    console.warn('[Search error]:', err);
     return c.json({ results: [] });
   }
 });
 
 /**
  * GET /api/v1/weather/favorites
- * Lista cidades favoritas do usuário logado (armazenadas no D1)
+ * Lista cidades favoritas do usuário logado (armazenadas no Cloudflare D1)
  */
 weatherRoutes.get('/favorites', requireAuth, async (c) => {
   const user = c.get('user') as UserSanitized;
   const favorites = await db.query<FavoriteLocation>(
-    `SELECT * FROM favorite_locations WHERE user_id = ? ORDER BY created_at ASC`,
+    `SELECT * FROM favorite_locations WHERE user_id = ? ORDER BY created_at DESC`,
     [user.id]
   );
   return c.json({ favorites });
@@ -359,7 +342,7 @@ weatherRoutes.get('/favorites', requireAuth, async (c) => {
 
 /**
  * POST /api/v1/weather/favorites
- * Adiciona uma cidade aos favoritos
+ * Adiciona uma cidade aos favoritos com proteção contra duplicação
  */
 weatherRoutes.post('/favorites', requireAuth, async (c) => {
   const user = c.get('user') as UserSanitized;
@@ -370,6 +353,23 @@ weatherRoutes.post('/favorites', requireAuth, async (c) => {
   }
 
   const { city_name, state, country, latitude, longitude } = parsed.data;
+
+  // Evita duplicatas para a mesma conta de usuário
+  const existing = await db.queryFirst<FavoriteLocation>(
+    `SELECT * FROM favorite_locations WHERE user_id = ? AND LOWER(city_name) = ? LIMIT 1`,
+    [user.id, city_name.toLowerCase()]
+  );
+  if (existing) {
+    return c.json(
+      {
+        message: 'Cidade já está na sua lista de favoritos.',
+        favorite: existing,
+        already_exists: true,
+      },
+      200
+    );
+  }
+
   const favId = `fav_${crypto.randomUUID()}`;
   const now = new Date().toISOString();
 
@@ -381,7 +381,7 @@ weatherRoutes.post('/favorites', requireAuth, async (c) => {
 
   return c.json(
     {
-      message: 'Cidade adicionada aos favoritos.',
+      message: 'Cidade adicionada aos favoritos com sucesso.',
       favorite: {
         id: favId,
         user_id: user.id,
